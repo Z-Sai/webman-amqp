@@ -1,7 +1,5 @@
 <?php
 
-use config\plugin\sai97\WebManAmqp\Job\DefaultQueueJob;
-
 return [
 
     'enable' => true,
@@ -16,6 +14,6 @@ return [
     ],
 
     "event" => [
-        "default" => DefaultQueueJob::class,
+        "default" => "",
     ]
 ];
