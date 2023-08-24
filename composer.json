@@ -1,0 +1,13 @@
+{
+  "name": "sai97/webman-amqp",
+  "type": "library",
+  "license": "MIT",
+  "description": "Webman plugin sai97/webman-amqp",
+  "require": {
+  },
+  "autoload": {
+    "psr-4": {
+      "Sai97\\WebManAmqp\\": "src"
+    }
+  }
+}
