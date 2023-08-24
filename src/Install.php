@@ -9,8 +9,7 @@ class Install
      * @var array
      */
     protected static $pathRelation = [
-        'config/plugin/sai97/webman-amqp' => 'config/plugin/sai97/webman-amqp',
-        'Job' => 'config/plugin/sai97/webman-amqp/Job'
+        'config/plugin/sai97/webman-amqp' => 'config/plugin/sai97/webman-amqp'
     ];
 
 
