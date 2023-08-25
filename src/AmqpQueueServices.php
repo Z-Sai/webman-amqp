@@ -211,7 +211,7 @@ class AmqpQueueServices
     }
 
     /**
-     * 析构函数，释放相关服务连接
+     * 释放相关服务连接
      * @throws \Exception
      */
     public function close(): void
@@ -222,5 +222,7 @@ class AmqpQueueServices
         if (self::$connection instanceof AMQPStreamConnection) {
             self::$connection->close();
         }
+        self::$connection = null;
+        self::$channel = null;
     }
 }
