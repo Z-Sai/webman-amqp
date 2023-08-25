@@ -19,13 +19,13 @@ class AmqpQueueServices
      * 当前通道
      * @var AMQPChannel $channel
      */
-    private $channel;
+    private static $channel;
 
     /**
      * 当前连接
      * @var AMQPStreamConnection $connection
      */
-    private $connection;
+    private static $connection;
 
     /**
      * 构造函数
@@ -44,11 +44,11 @@ class AmqpQueueServices
      */
     public function getChannel(): AMQPChannel
     {
-        if ($this->channel instanceof AMQPChannel) {
-            return $this->channel;
+        if (self::$channel instanceof AMQPChannel) {
+            return self::$channel;
         }
-        $this->channel = $this->connection->channel();
-        return $this->channel;
+        self::$channel = self::$connection->channel();
+        return self::$channel;
     }
 
     /**
@@ -71,8 +71,8 @@ class AmqpQueueServices
      */
     protected function connection(array $config): void
     {
-        if (!($this->connection instanceof AMQPStreamConnection)) {
-            $this->connection = new AMQPStreamConnection($config["host"], $config["port"], $config["user"], $config["password"]);
+        if (!(self::$connection instanceof AMQPStreamConnection)) {
+            self::$connection = new AMQPStreamConnection($config["host"], $config["port"], $config["user"], $config["password"]);
         }
     }
 
@@ -124,7 +124,7 @@ class AmqpQueueServices
         $this->initStrategy();
 
         $datetime = date("Y-m-d H:i:s", time());
-        echo " [{$datetime}] ChannelId:{$this->channel->getChannelId()} Waiting for messages:\n";
+        echo " [{$datetime}] Waiting for messages:\n";
 
         $channel->basic_consume(
             $this->queueJob->getQueueName(),
@@ -144,7 +144,7 @@ class AmqpQueueServices
     }
 
     //初始化策略
-    private function initStrategy()
+    private function initStrategy(): void
     {
         $channel = $this->getChannel();
 
@@ -214,13 +214,13 @@ class AmqpQueueServices
      * 析构函数，释放相关服务连接
      * @throws \Exception
      */
-    public function __destruct()
+    public function close(): void
     {
-        if ($this->channel instanceof AMQPChannel) {
-            $this->channel->close();
+        if (self::$channel instanceof AMQPChannel) {
+            self::$channel->close();
         }
-        if ($this->connection instanceof AMQPStreamConnection) {
-            $this->connection->close();
+        if (self::$connection instanceof AMQPStreamConnection) {
+            self::$connection->close();
         }
     }
 }
