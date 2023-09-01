@@ -48,6 +48,9 @@ class AmqpQueueServices
             return self::$channel;
         }
         self::$channel = self::$connection->channel();
+        if ($this->queueJob->isPublisherConfirm()) {
+            self::$channel->confirm_select($this->queueJob->getConfirmSelectNowait());
+        }
         return self::$channel;
     }
 
@@ -72,7 +75,25 @@ class AmqpQueueServices
     protected function connection(array $config): void
     {
         if (!(self::$connection instanceof AMQPStreamConnection)) {
-            self::$connection = new AMQPStreamConnection($config["host"], $config["port"], $config["user"], $config["password"]);
+            self::$connection = new AMQPStreamConnection(
+                $config["host"],
+                $config["port"],
+                $config["user"],
+                $config["password"],
+                $config["vhost"] ?? "/",
+                $config["insist"] ?? false,
+                $config["login_method"] ?? "AMQPLAIN",
+                $config["login_response"] ?? null,
+                $config["locale"] ?? "en_US",
+                $config["connection_timeout"] ?? 3.0,
+                $config["read_write_timeout"] ?? 3.0,
+                $config["context"] ?? null,
+                $config["keepalive"] ?? false,
+                $config["heartbeat"] ?? 0,
+                $config["channel_rpc_timeout"] ?? 0.0,
+                $config["ssl_protocol"] ?? null,
+                $config["config"] ?? null
+            );
         }
     }
 
@@ -84,6 +105,17 @@ class AmqpQueueServices
     public function producer(string $body): void
     {
         $channel = $this->getChannel();
+
+        if ($this->queueJob->isPublisherConfirm()) {
+            //发布者异步确认ACK回调函数
+            if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
+                $channel->set_ack_handler($publisherConfirmsAckHandler);
+            }
+            //发布者异步确认NACK回调函数
+            if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
+                $channel->set_nack_handler($publisherConfirmsNackHandler);
+            }
+        }
 
         $properties = [
             "content_type" => $this->queueJob->getContentType(),
@@ -107,6 +139,11 @@ class AmqpQueueServices
             $this->queueJob->getExchangeName(),
             $this->queueJob->getRoutingKey() ? $this->queueJob->getRoutingKey() : $this->queueJob->getQueueName()
         );
+
+        if ($this->queueJob->isPublisherConfirm()) {
+            //等待接收服务器的ack和nack
+            $channel->wait_for_pending_acks($this->queueJob->getPublisherConfirmWaitTime());
+        }
     }
 
     /**
@@ -250,13 +287,32 @@ class AmqpQueueServices
      */
     public function close(): void
     {
-        if (self::$channel instanceof AMQPChannel) {
-            self::$channel->close();
-        }
+        $this->closeChannel();
+        $this->closeConnection();
+    }
+
+    /**
+     * 关闭连接
+     * @return void
+     * @throws \Exception
+     */
+    public function closeConnection(): void
+    {
         if (self::$connection instanceof AMQPStreamConnection) {
             self::$connection->close();
         }
         self::$connection = null;
+    }
+
+    /**
+     * 关闭通道
+     * @return void
+     */
+    public function closeChannel(): void
+    {
+        if (self::$channel instanceof AMQPChannel) {
+            self::$channel->close();
+        }
         self::$channel = null;
     }
 }
