@@ -39,6 +39,16 @@ class AmqpQueueServices
     }
 
     /**
+     * 析构函数
+     */
+    public function __destruct()
+    {
+        if ($this->queueJob->isPublisherConfirm()) {
+            $this->closeChannel();
+        }
+    }
+
+    /**
      * 获取通道
      * @return AMQPChannel
      */
