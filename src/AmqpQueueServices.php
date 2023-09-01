@@ -48,9 +48,6 @@ class AmqpQueueServices
             return self::$channel;
         }
         self::$channel = self::$connection->channel();
-        if ($this->queueJob->isPublisherConfirm()) {
-            self::$channel->confirm_select($this->queueJob->getConfirmSelectNowait());
-        }
         return self::$channel;
     }
 
@@ -107,6 +104,10 @@ class AmqpQueueServices
         $channel = $this->getChannel();
 
         if ($this->queueJob->isPublisherConfirm()) {
+
+            //设置通道为确认模式
+            $channel->confirm_select($this->queueJob->getConfirmSelectNowait());
+
             //发布者异步确认ACK回调函数
             if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
                 $channel->set_ack_handler($publisherConfirmsAckHandler);
