@@ -42,7 +42,7 @@ class AmqpQueueService
     public function __construct()
     {
         //加载amqp配置
-        if (empty($config = config("plugin.sai97.webman-amqp.amqp"))) {
+        if (empty($config = config("plugin.sai97.webman-amqp.app"))) {
             throw new AmqpQueueException("configuration not found for amqp.");
         }
         $this->config = $config;

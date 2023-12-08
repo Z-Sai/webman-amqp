@@ -19,7 +19,7 @@ class Heartbeat implements Bootstrap
             if ($worker->name != "webman") return;
 
             //读取amqp配置文件
-            $configs = config("plugin.sai97.webman-amqp.amqp");
+            $configs = config("plugin.sai97.webman-amqp.app");
             if (!isset($configs["enable"]) || $configs["enable"] !== true) return;
             //获取所有的连接配置
             if (!isset($configs["connections"]) || empty($connections = $configs["connections"])) return;
