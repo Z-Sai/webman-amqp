@@ -7,82 +7,87 @@ use PhpAmqpLib\Message\AMQPMessage;
 use PhpAmqpLib\Wire\AMQPTable;
 use PhpAmqpLib\Channel\AMQPChannel;
 
-class AmqpQueueServices
+class AmqpQueueService
 {
     /**
-     * 当前队列实例
-     * @var QueueInterface
+     * 连接管理集合
+     * @var array $connectionManage
      */
-    private $queueJob;
-
-    /**
-     * 当前通道
-     * @var AMQPChannel $channel
-     */
-    private static $channel;
+    protected $connectionManage;
 
     /**
      * 当前连接
      * @var AMQPStreamConnection $connection
      */
-    private static $connection;
+    protected $connection;
 
     /**
-     * 构造函数
-     * @param QueueInterface $queueJob
-     * @throws \Exception
+     * 当前通道
+     * @var AMQPChannel $channel
      */
-    public function __construct(QueueInterface $queueJob)
-    {
-        $this->queueJob = $queueJob;
-        $this->connection($this->getConfigs());
-    }
+    protected $channel;
 
     /**
-     * 析构函数
+     * 当前队列实例
+     * @var QueueInterface $queueJob
      */
-    public function __destruct()
+    protected $queueJob;
+
+    /**
+     * amqp配置信息
+     * @var array $config
+     */
+    protected $config;
+
+    public function __construct()
     {
-        if ($this->queueJob->isPublisherConfirm()) {
-            $this->closeChannel();
+        //加载amqp配置
+        if (empty($config = config("plugin.sai97.webman-amqp.amqp"))) {
+            throw new AmqpQueueException("configuration not found for amqp.");
         }
+        $this->config = $config;
+    }
+
+    public function register(QueueInterface $queueJob): void
+    {
+        $this->connectionManage[$queueJob->getConnectName()] = $queueJob->getConnectName();
+    }
+
+    public function getConnectionManage(): array
+    {
+        return $this->connectionManage;
     }
 
     /**
-     * 获取通道
-     * @return AMQPChannel
+     * @throws AmqpQueueException
      */
-    public function getChannel(): AMQPChannel
+    public function Connection(string $name): static
     {
-        if (self::$channel instanceof AMQPChannel) {
-            return self::$channel;
+        if (!isset($this->config["connections"][$name]) || empty($config = $this->config["connections"][$name])) {
+            throw new AmqpQueueException("No connection configuration named {$name} was found.");
         }
-        self::$channel = self::$connection->channel();
-        return self::$channel;
+        $this->setQueueJob($config["instance"])
+            ->setConnection($config)
+            ->setChannel();
+        return $this;
     }
 
-    /**
-     * 获取配置
-     * @throws \Exception
-     */
-    protected function getConfigs(): array
+    protected function setQueueJob(string $className): static
     {
-        $connectName = $this->queueJob->getConnectName();
-        $amqpConfig = config("plugin.sai97.webman-amqp.app");
-        if (!isset($amqpConfig["connection"][$connectName]) || empty($connectionConfig = $amqpConfig["connection"][$connectName])) {
-            throw new \Exception("rabbitmq config with connection is not found!");
+        if (!($this->queueJob instanceof QueueInterface)) {
+            $instance = new $className;
+            if (!($instance instanceof QueueInterface)) {
+                throw new AmqpQueueException("Instance must implement the QueueInterface constraint.");
+            }
+            $this->queueJob = $instance;
         }
-        return $connectionConfig;
+        return $this;
     }
 
-    /**
-     * 获取连接
-     * @throws \Exception
-     */
-    protected function connection(array $config): void
+    protected function setConnection(array $config): static
     {
-        if (!(self::$connection instanceof AMQPStreamConnection)) {
-            self::$connection = new AMQPStreamConnection(
+        if (!($this->connection instanceof AMQPStreamConnection) || !$this->connection->isConnected()) {
+            $this->connection = new AMQPStreamConnection(
                 $config["host"],
                 $config["port"],
                 $config["user"],
@@ -102,29 +107,36 @@ class AmqpQueueServices
                 $config["config"] ?? null
             );
         }
+        return $this;
+    }
+
+    protected function setChannel(): static
+    {
+        if (!($this->channel instanceof AMQPChannel) || !$this->channel->is_open()) {
+           $this->channel = $this->connection->channel();
+        }
+        return $this;
     }
 
     /**
      * 生产者发送消息
      * @return void
-     * @throws \Exception
+     * @throws AmqpQueueException
      */
     public function producer(string $body): void
     {
-        $channel = $this->getChannel();
-
         if ($this->queueJob->isPublisherConfirm()) {
 
             //设置通道为确认模式
-            $channel->confirm_select($this->queueJob->getConfirmSelectNowait());
+            $this->channel->confirm_select($this->queueJob->getConfirmSelectNowait());
 
             //发布者异步确认ACK回调函数
             if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
-                $channel->set_ack_handler($publisherConfirmsAckHandler);
+                $this->channel->set_ack_handler($publisherConfirmsAckHandler);
             }
             //发布者异步确认NACK回调函数
             if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
-                $channel->set_nack_handler($publisherConfirmsNackHandler);
+                $this->channel->set_nack_handler($publisherConfirmsNackHandler);
             }
         }
 
@@ -145,7 +157,7 @@ class AmqpQueueServices
         }
 
         //执行发布消息
-        $channel->basic_publish(
+        $this->channel->basic_publish(
             $message,
             $this->queueJob->getExchangeName(),
             $this->queueJob->getRoutingKey() ? $this->queueJob->getRoutingKey() : $this->queueJob->getQueueName()
@@ -153,29 +165,26 @@ class AmqpQueueServices
 
         if ($this->queueJob->isPublisherConfirm()) {
             //等待接收服务器的ack和nack
-            $channel->wait_for_pending_acks($this->queueJob->getPublisherConfirmWaitTime());
+            $this->channel->wait_for_pending_acks($this->queueJob->getPublisherConfirmWaitTime());
         }
     }
 
     /**
      * 消费者处理接收并处理消息
      * @return void
-     * @throws \Exception
      */
     public function consumer(): void
     {
-        $channel = $this->getChannel();
-
         //当前消费者QOS相关配置
-        $channel->basic_qos($this->queueJob->getQosPrefetchSize(), $this->queueJob->getQosPrefetchCount(), $this->queueJob->isQosGlobal());
+        $this->channel->basic_qos($this->queueJob->getQosPrefetchSize(), $this->queueJob->getQosPrefetchCount(), $this->queueJob->isQosGlobal());
 
         //初始化策略
         $this->initStrategy("consumer");
 
         $datetime = date("Y-m-d H:i:s", time());
-        echo " [{$datetime}] ChannelId:{$channel->getChannelId()} Waiting for messages:\n";
+        echo " [{$datetime}] ChannelId:{$this->channel->getChannelId()} Waiting for messages:\n";
 
-        $channel->basic_consume(
+        $this->channel->basic_consume(
             $this->queueJob->getQueueName(),
             $this->queueJob->getConsumerTag(),
             $this->queueJob->isConsumerNoLocal(),
@@ -187,22 +196,21 @@ class AmqpQueueServices
             new AMQPTable($this->queueJob->getConsumerArgs())
         );
 
-        while ($channel->is_open()) {
-            $channel->wait();
+        while ($this->channel->is_open()) {
+            $this->channel->wait();
         }
     }
 
     /**
      * 初始化策略
-     * @throws \Exception
      */
-    private function initStrategy(string $caller)
+    private function initStrategy(string $caller): void
     {
-        if (!in_array($caller, ["producer", "consumer"])) throw new \Exception("initStrategy scene Params is Fail.");
+        if (!in_array($caller, ["producer", "consumer"])) {
+            throw new AmqpQueueException("initStrategy scene Params is Fail.");
+        }
 
-        $channel = $this->getChannel();
-
-        if ($this->queueJob->getExchangeName() && $this->queueJob->getExchangeType()) { //使用交换机交互模型
+        if ($this->queueJob->getExchangeName() && $this->queueJob->getExchangeType()) { //使用交换器交互模型
 
             $this->handlerExchangeDeclare();
 
@@ -211,28 +219,26 @@ class AmqpQueueServices
 
                 $queueName = $this->handlerQueueDeclare();
 
-                //获取队列绑定交换机的路由KEY,优先选择getQueueBindRoutingKey
+                //获取队列绑定交换器的路由KEY,优先选择getQueueBindRoutingKey
                 $routingKey = $this->queueJob->getQueueBindRoutingKey() ? $this->queueJob->getQueueBindRoutingKey() : $this->queueJob->getRoutingKey();
 
-                //将队列绑定至交换机
-                $channel->queue_bind($queueName, $this->queueJob->getExchangeName(), $routingKey);
+                //将队列绑定至交换器
+                $this->channel->queue_bind($queueName, $this->queueJob->getExchangeName(), $routingKey);
             }
-        } else { //不使用交换机交互模型
+        } else { //不使用交换器交互模型
             $this->handlerQueueDeclare();
         }
     }
 
     /**
-     * 处理声明交换机
+     * 处理声明交换器
      * @return void
      */
     private function handlerExchangeDeclare(): void
     {
-        $channel = $this->getChannel();
-
         $exchangeType = $this->queueJob->getExchangeType();
 
-        //交换机附加参数
+        //交换器附加参数
         $exchangeArgument = $this->queueJob->getExchangeArgs();
 
         //延迟队列
@@ -243,8 +249,8 @@ class AmqpQueueServices
             $exchangeType = "x-delayed-message";
         }
 
-        //初始化交换机
-        $channel->exchange_declare(
+        //初始化交换器
+        $this->channel->exchange_declare(
             $this->queueJob->getExchangeName(),
             $exchangeType,
             $this->queueJob->isExchangePassive(),
@@ -263,22 +269,20 @@ class AmqpQueueServices
      */
     private function handlerQueueDeclare(): string
     {
-        $channel = $this->getChannel();
-
         //queue附加参数
         $argument = $this->queueJob->getQueueArgs();
 
         //开启死信队列模式
         if ($this->queueJob->isDeadLetter() && $this->queueJob->getDeadLetterExchangeName() && $this->queueJob->getDeadLetterRoutingKey()) {
-            //声明业务队列的死信交换机
+            //声明业务队列的死信交换器
             $argument = array_merge($argument, [
-                "x-dead-letter-exchange" => $this->queueJob->getDeadLetterExchangeName(), //配置死信交换机
+                "x-dead-letter-exchange" => $this->queueJob->getDeadLetterExchangeName(), //配置死信交换器
                 "x-dead-letter-routing-key" => $this->queueJob->getDeadLetterRoutingKey(), //配置RoutingKey
             ]);
         }
 
         //声明队列
-        list($queueName, ,) = $channel->queue_declare(
+        list($queueName) = $this->channel->queue_declare(
             $this->queueJob->getQueueName(),
             $this->queueJob->isQueuePassive(),
             $this->queueJob->isQueueDurable(),
@@ -294,7 +298,6 @@ class AmqpQueueServices
 
     /**
      * 释放相关服务连接
-     * @throws \Exception
      */
     public function close(): void
     {
@@ -305,14 +308,13 @@ class AmqpQueueServices
     /**
      * 关闭连接
      * @return void
-     * @throws \Exception
      */
     public function closeConnection(): void
     {
-        if (self::$connection instanceof AMQPStreamConnection) {
-            self::$connection->close();
+        if ($this->connection instanceof AMQPStreamConnection) {
+            $this->connection->close();
         }
-        self::$connection = null;
+        $this->connection = null;
     }
 
     /**
@@ -321,9 +323,19 @@ class AmqpQueueServices
      */
     public function closeChannel(): void
     {
-        if (self::$channel instanceof AMQPChannel) {
-            self::$channel->close();
+        if ($this->channel instanceof AMQPChannel) {
+            $this->channel->close();
         }
-        self::$channel = null;
+        $this->channel = null;
+    }
+
+    /**
+     * 析构函数
+     */
+    public function __destruct()
+    {
+        if ($this->queueJob->isPublisherConfirm()) {
+            $this->closeChannel();
+        }
     }
 }
