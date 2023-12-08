@@ -29,7 +29,7 @@ class Heartbeat implements Bootstrap
              */
             $service = Container::get(AmqpQueueService::class);
             foreach ($connections as $connection) {
-                $service->register($connection["instance"]);
+                $service->register(new $connection["instance"]);
             }
             //定时检查并发送心跳数据
 //            Timer::add($config[""], function () use ($allQueueJobs) {
