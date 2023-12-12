@@ -127,9 +127,6 @@ class AmqpQueueService
         ];
         $message = new AMQPMessage($body, $properties);
 
-        //初始化策略
-        $this->initStrategy("producer");
-
         if ($this->queueJob->isDelay() && $this->queueJob->getDelayTTL()) {
             $arguments = [
                 "x-delay" => $this->queueJob->getDelayTTL()
