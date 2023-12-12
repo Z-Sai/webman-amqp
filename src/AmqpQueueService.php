@@ -11,9 +11,9 @@ class AmqpQueueService
 {
     /**
      * 连接管理集合
-     * @var array $connectionManage
+     * @var array $managers
      */
-    protected $connectionManage;
+    protected $managers;
 
     /**
      * 当前连接
@@ -48,73 +48,68 @@ class AmqpQueueService
         $this->config = $config;
     }
 
+    /**
+     * @throws \Exception
+     */
     public function register(QueueInterface $queueJob): void
     {
-        $this->connectionManage[$queueJob->getConnectName()] = $queueJob->getConnectName();
+        $connectName = $queueJob->getConnectName();
+
+        if (isset($this->managers[$connectName])) {
+            throw new AmqpQueueException("manager {$connectName} is exists.");
+        }
+
+        if (!isset($this->config["connections"][$connectName]) || empty($config = $this->config["connections"][$connectName])) {
+            throw new AmqpQueueException("No connection configuration named {$connectName} was found.");
+        }
+
+        $manager["connection"] = new AMQPStreamConnection(
+            $config["host"],
+            $config["port"],
+            $config["user"],
+            $config["password"],
+            $config["vhost"] ?? "/",
+            $config["insist"] ?? false,
+            $config["login_method"] ?? "AMQPLAIN",
+            $config["login_response"] ?? null,
+            $config["locale"] ?? "en_US",
+            $config["connection_timeout"] ?? 3.0,
+            $config["read_write_timeout"] ?? 3.0,
+            $config["context"] ?? null,
+            $config["keepalive"] ?? false,
+            $config["heartbeat"] ?? 0,
+            $config["channel_rpc_timeout"] ?? 0.0,
+            $config["ssl_protocol"] ?? null,
+            $config["config"] ?? null
+        );
+        $manager["channel"] = $manager["connection"]->channel();
+        $manager["queueJob"] = new $config["instance"];
+        $this->managers[$connectName] = $manager;
     }
 
-    public function getConnectionManage(): array
+    /**
+     * @throws \Exception
+     */
+    protected function initManager(string $name): void
     {
-        return $this->connectionManage;
+        $manager = $this->managers[$name];
+        $this->connection = $manager["connection"];
+        $this->channel = $manager["channel"];
+        $this->queueJob = $manager["queueJob"];
+    }
+
+    public function getManagers(): array
+    {
+        return $this->managers;
     }
 
     /**
      * @throws AmqpQueueException
+     * @throws \Exception
      */
     public function Connection(string $name): static
     {
-        if (!isset($this->config["connections"][$name]) || empty($config = $this->config["connections"][$name])) {
-            throw new AmqpQueueException("No connection configuration named {$name} was found.");
-        }
-        $this->setQueueJob($config["instance"])
-            ->setConnection($config)
-            ->setChannel();
-        return $this;
-    }
-
-    protected function setQueueJob(string $className): static
-    {
-        if (!($this->queueJob instanceof QueueInterface)) {
-            $instance = new $className;
-            if (!($instance instanceof QueueInterface)) {
-                throw new AmqpQueueException("Instance must implement the QueueInterface constraint.");
-            }
-            $this->queueJob = $instance;
-        }
-        return $this;
-    }
-
-    protected function setConnection(array $config): static
-    {
-        if (!($this->connection instanceof AMQPStreamConnection) || !$this->connection->isConnected()) {
-            $this->connection = new AMQPStreamConnection(
-                $config["host"],
-                $config["port"],
-                $config["user"],
-                $config["password"],
-                $config["vhost"] ?? "/",
-                $config["insist"] ?? false,
-                $config["login_method"] ?? "AMQPLAIN",
-                $config["login_response"] ?? null,
-                $config["locale"] ?? "en_US",
-                $config["connection_timeout"] ?? 3.0,
-                $config["read_write_timeout"] ?? 3.0,
-                $config["context"] ?? null,
-                $config["keepalive"] ?? false,
-                $config["heartbeat"] ?? 0,
-                $config["channel_rpc_timeout"] ?? 0.0,
-                $config["ssl_protocol"] ?? null,
-                $config["config"] ?? null
-            );
-        }
-        return $this;
-    }
-
-    protected function setChannel(): static
-    {
-        if (!($this->channel instanceof AMQPChannel) || !$this->channel->is_open()) {
-           $this->channel = $this->connection->channel();
-        }
+        $this->initManager($name);
         return $this;
     }
 

@@ -31,11 +31,14 @@ class Heartbeat implements Bootstrap
             foreach ($connections as $connection) {
                 $service->register(new $connection["instance"]);
             }
+            $managers = $service->getManagers();
             //定时检查并发送心跳数据
-//            Timer::add($config[""], function () use ($allQueueJobs) {
-//                $connection->checkHeartBeat();
-//                echo "[" . Carbon::now()->format("Y-m-d H:i:s") . "] RabbitMQ检测心跳状态机制执行完毕..." . PHP_EOL;
-//            });
+            Timer::add(10, function () use ($managers) {
+                foreach ($managers as $name => $manager) {
+                    $manager["connection"]->checkHeartBeat();
+                    echo "[{$name} " . Carbon::now()->format("Y-m-d H:i:s") . "] RabbitMQ检测心跳状态机制执行完毕..." . PHP_EOL;
+                }
+            });
         } catch (\Throwable $throwable) {
             echo "AMQP心跳进程发生错误: class->" . __CLASS__ . ", error->{$throwable->getMessage()}, file->{$throwable->getFile()}, line->{$throwable->getLine()}" . PHP_EOL;
             return;
