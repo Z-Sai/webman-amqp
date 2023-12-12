@@ -329,8 +329,8 @@ class AmqpQueueService
      */
     public function __destruct()
     {
-        if ($this->queueJob->isPublisherConfirm()) {
-            $this->closeChannel();
-        }
+//        if ($this->queueJob instanceof QueueInterface && $this->queueJob->isPublisherConfirm()) {
+//            $this->closeChannel();
+//        }
     }
 }
