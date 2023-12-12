@@ -96,6 +96,7 @@ class AmqpQueueService
         $this->connection = $manager["connection"];
         $this->channel = $manager["channel"];
         $this->queueJob = $manager["queueJob"];
+        $this->initStrategy("producer");
     }
 
     public function getManagers(): array
@@ -120,21 +121,6 @@ class AmqpQueueService
      */
     public function producer(string $body): void
     {
-        if ($this->queueJob->isPublisherConfirm()) {
-
-            //设置通道为确认模式
-            $this->channel->confirm_select($this->queueJob->getConfirmSelectNowait());
-
-            //发布者异步确认ACK回调函数
-            if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
-                $this->channel->set_ack_handler($publisherConfirmsAckHandler);
-            }
-            //发布者异步确认NACK回调函数
-            if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
-                $this->channel->set_nack_handler($publisherConfirmsNackHandler);
-            }
-        }
-
         $properties = [
             "content_type" => $this->queueJob->getContentType(),
             "delivery_mode" => $this->queueJob->getMessageDeliveryMode()
@@ -157,11 +143,6 @@ class AmqpQueueService
             $this->queueJob->getExchangeName(),
             $this->queueJob->getRoutingKey() ? $this->queueJob->getRoutingKey() : $this->queueJob->getQueueName()
         );
-
-        if ($this->queueJob->isPublisherConfirm()) {
-            //等待接收服务器的ack和nack
-            $this->channel->wait_for_pending_acks($this->queueJob->getPublisherConfirmWaitTime());
-        }
     }
 
     /**
@@ -170,9 +151,6 @@ class AmqpQueueService
      */
     public function consumer(): void
     {
-        //当前消费者QOS相关配置
-        $this->channel->basic_qos($this->queueJob->getQosPrefetchSize(), $this->queueJob->getQosPrefetchCount(), $this->queueJob->isQosGlobal());
-
         //初始化策略
         $this->initStrategy("consumer");
 
@@ -203,6 +181,30 @@ class AmqpQueueService
     {
         if (!in_array($caller, ["producer", "consumer"])) {
             throw new AmqpQueueException("initStrategy scene Params is Fail.");
+        }
+
+        if ($caller == "producer") {
+            if ($this->queueJob->isPublisherConfirm()) {
+
+                //设置通道为确认模式
+                $this->channel->confirm_select($this->queueJob->getConfirmSelectNowait());
+
+                //发布者异步确认ACK回调函数
+                if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
+                    $this->channel->set_ack_handler($publisherConfirmsAckHandler);
+                }
+
+                //发布者异步确认NACK回调函数
+                if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
+                    $this->channel->set_nack_handler($publisherConfirmsNackHandler);
+                }
+
+                //等待接收服务器的ack和nack
+                $this->channel->wait_for_pending_acks($this->queueJob->getPublisherConfirmWaitTime());
+            }
+        } else {
+            //当前消费者QOS相关配置
+            $this->channel->basic_qos($this->queueJob->getQosPrefetchSize(), $this->queueJob->getQosPrefetchCount(), $this->queueJob->isQosGlobal());
         }
 
         if ($this->queueJob->getExchangeName() && $this->queueJob->getExchangeType()) { //使用交换器交互模型
@@ -329,8 +331,8 @@ class AmqpQueueService
      */
     public function __destruct()
     {
-//        if ($this->queueJob instanceof QueueInterface && $this->queueJob->isPublisherConfirm()) {
-//            $this->closeChannel();
-//        }
+        if ($this->queueJob instanceof QueueInterface && $this->queueJob->isPublisherConfirm()) {
+            $this->closeChannel();
+        }
     }
 }
