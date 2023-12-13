@@ -59,6 +59,12 @@ class AmqpQueueService
             throw new AmqpQueueException("manager {$connectName} is exists.");
         }
 
+        $manager = $this->initManager($connectName);
+        $this->managers[$connectName] = $manager;
+    }
+
+    protected function initManager(string $connectName): array
+    {
         if (!isset($this->config["connections"][$connectName]) || empty($config = $this->config["connections"][$connectName])) {
             throw new AmqpQueueException("No connection configuration named {$connectName} was found.");
         }
@@ -85,13 +91,14 @@ class AmqpQueueService
         $manager["connection"] = $connection;
 
         $channel = $connection->channel();
+        $queueJob = new $config["instance"];
         $this->initStrategy($channel, $queueJob);
 
         $manager["channel"] = $channel;
 
         $manager["queueJob"] = $queueJob;
 
-        $this->managers[$connectName] = $manager;
+        return $manager;
     }
 
     public function getManagers(): array
@@ -106,7 +113,7 @@ class AmqpQueueService
     public function Connection(string $name): static
     {
         if (!isset($this->managers[$name]) || empty($manager = $this->managers[$name])) {
-            throw new AmqpQueueException("not found {$name} manager.");
+            $manager = $this->initManager($name);
         }
         $this->connection = $manager["connection"];
         $this->channel = $manager["channel"];
