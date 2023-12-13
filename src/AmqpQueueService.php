@@ -121,6 +121,18 @@ class AmqpQueueService
      */
     public function producer(string $body): void
     {
+        if ($this->queueJob->isPublisherConfirm()) {
+            //发布者异步确认ACK回调函数
+            if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
+                $this->channel->set_ack_handler($publisherConfirmsAckHandler);
+            }
+
+            //发布者异步确认NACK回调函数
+            if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
+                $this->channel->set_nack_handler($publisherConfirmsNackHandler);
+            }
+        }
+
         $properties = [
             "content_type" => $this->queueJob->getContentType(),
             "delivery_mode" => $this->queueJob->getMessageDeliveryMode()
@@ -187,19 +199,8 @@ class AmqpQueueService
 
         if ($caller == "producer") {
             if ($this->queueJob->isPublisherConfirm()) {
-
                 //设置通道为确认模式
                 $this->channel->confirm_select($this->queueJob->getConfirmSelectNowait());
-
-                //发布者异步确认ACK回调函数
-                if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
-                    $this->channel->set_ack_handler($publisherConfirmsAckHandler);
-                }
-
-                //发布者异步确认NACK回调函数
-                if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
-                    $this->channel->set_nack_handler($publisherConfirmsNackHandler);
-                }
             }
         } else {
             //当前消费者QOS相关配置
