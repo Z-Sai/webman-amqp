@@ -84,31 +84,14 @@ class AmqpQueueService
         );
         $manager["connection"] = $connection;
 
-        /**
-         * @var $instance QueueInterface
-         */
-        $instance = new $config["instance"];
-        $manager["queueJob"] = $instance;
-
         $channel = $connection->channel();
-        if ($instance->isPublisherConfirm()) {
-            //设置通道为确认模式
-            $channel->confirm_select($instance->getConfirmSelectNowait());
-        }
+        $this->initStrategy($channel, $queueJob);
+
         $manager["channel"] = $channel;
 
-        $this->managers[$connectName] = $manager;
-    }
+        $manager["queueJob"] = $queueJob;
 
-    /**
-     * @throws \Exception
-     */
-    protected function initManager(string $name): void
-    {
-        $manager = $this->managers[$name];
-        $this->connection = $manager["connection"];
-        $this->channel = $manager["channel"];
-        $this->queueJob = $manager["queueJob"];
+        $this->managers[$connectName] = $manager;
     }
 
     public function getManagers(): array
@@ -122,7 +105,12 @@ class AmqpQueueService
      */
     public function Connection(string $name): static
     {
-        $this->initManager($name);
+        if (!isset($this->managers[$name]) || empty($manager = $this->managers[$name])) {
+            throw new AmqpQueueException("not found {$name} manager.");
+        }
+        $this->connection = $manager["connection"];
+        $this->channel = $manager["channel"];
+        $this->queueJob = $manager["queueJob"];
         return $this;
     }
 
@@ -133,20 +121,6 @@ class AmqpQueueService
      */
     public function producer(string $body): void
     {
-        if ($this->queueJob->isPublisherConfirm()) {
-            //发布者异步确认ACK回调函数
-            if (!is_null($publisherConfirmsAckHandler = $this->queueJob->getPublisherConfirmsAckHandler())) {
-                $this->channel->set_ack_handler($publisherConfirmsAckHandler);
-            }
-
-            //发布者异步确认NACK回调函数
-            if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
-                $this->channel->set_nack_handler($publisherConfirmsNackHandler);
-            }
-        }
-
-        $this->initStrategy("producer");
-
         $properties = [
             "content_type" => $this->queueJob->getContentType(),
             "delivery_mode" => $this->queueJob->getMessageDeliveryMode()
@@ -179,9 +153,6 @@ class AmqpQueueService
      */
     public function consumer(): void
     {
-        //初始化策略
-        $this->initStrategy("consumer");
-
         $datetime = date("Y-m-d H:i:s", time());
         echo " [{$datetime}] ChannelId:{$this->channel->getChannelId()} Waiting for messages:\n";
 
@@ -205,39 +176,37 @@ class AmqpQueueService
     /**
      * 初始化策略
      */
-    private function initStrategy(string $caller): void
+    private function initStrategy(AMQPChannel &$channel, QueueInterface &$queueJob): void
     {
-        if (!in_array($caller, ["producer", "consumer"])) {
-            throw new AmqpQueueException("initStrategy scene Params is Fail.");
-        }
-
-        if ($caller == "producer") {
-//            if ($this->queueJob->isPublisherConfirm()) {
-//                //设置通道为确认模式
-//                $this->channel->confirm_select($this->queueJob->getConfirmSelectNowait());
-//            }
-        } else {
-            //当前消费者QOS相关配置
-            $this->channel->basic_qos($this->queueJob->getQosPrefetchSize(), $this->queueJob->getQosPrefetchCount(), $this->queueJob->isQosGlobal());
-        }
-
-        if ($this->queueJob->getExchangeName() && $this->queueJob->getExchangeType()) { //使用交换器交互模型
-
-            $this->handlerExchangeDeclare();
-
-            //如果是消费者调用方
-            if ($caller == "consumer") {
-
-                $queueName = $this->handlerQueueDeclare();
-
-                //获取队列绑定交换器的路由KEY,优先选择getQueueBindRoutingKey
-                $routingKey = $this->queueJob->getQueueBindRoutingKey() ? $this->queueJob->getQueueBindRoutingKey() : $this->queueJob->getRoutingKey();
-
-                //将队列绑定至交换器
-                $this->channel->queue_bind($queueName, $this->queueJob->getExchangeName(), $routingKey);
+        if ($queueJob->isPublisherConfirm()) {
+            //设置通道为确认模式
+            $channel->confirm_select($queueJob->getConfirmSelectNowait());
+            //发布者异步确认ACK回调函数
+            if (!is_null($publisherConfirmsAckHandler = $queueJob->getPublisherConfirmsAckHandler())) {
+                $channel->set_ack_handler($publisherConfirmsAckHandler);
             }
+            //发布者异步确认NACK回调函数
+            if (!is_null($publisherConfirmsNackHandler = $queueJob->getPublisherConfirmsNackHandler())) {
+                $channel->set_nack_handler($publisherConfirmsNackHandler);
+            }
+        }
+
+        //当前消费者QOS相关配置
+        $channel->basic_qos($queueJob->getQosPrefetchSize(), $queueJob->getQosPrefetchCount(), $queueJob->isQosGlobal());
+
+        if ($queueJob->getExchangeName() && $queueJob->getExchangeType()) { //使用交换器交互模型
+
+            $this->handlerExchangeDeclare($channel, $queueJob);
+
+            $queueName = $this->handlerQueueDeclare($channel, $queueJob);
+
+            //获取队列绑定交换器的路由KEY,优先选择getQueueBindRoutingKey
+            $routingKey = $queueJob->getQueueBindRoutingKey() ? $queueJob->getQueueBindRoutingKey() : $queueJob->getRoutingKey();
+
+            //将队列绑定至交换器
+            $channel->queue_bind($queueName, $queueJob->getExchangeName(), $routingKey);
         } else { //不使用交换器交互模型
-            $this->handlerQueueDeclare();
+            $this->handlerQueueDeclare($channel, $queueJob);
         }
     }
 
@@ -245,15 +214,15 @@ class AmqpQueueService
      * 处理声明交换器
      * @return void
      */
-    private function handlerExchangeDeclare(): void
+    private function handlerExchangeDeclare(AMQPChannel &$channel, QueueInterface &$queueJob): void
     {
-        $exchangeType = $this->queueJob->getExchangeType();
+        $exchangeType = $queueJob->getExchangeType();
 
         //交换器附加参数
-        $exchangeArgument = $this->queueJob->getExchangeArgs();
+        $exchangeArgument = $queueJob->getExchangeArgs();
 
         //延迟队列
-        if ($this->queueJob->isDelay()) {
+        if ($queueJob->isDelay()) {
             $exchangeArgument = array_merge($exchangeArgument, [
                 "x-delayed-type" => $exchangeType
             ]);
@@ -261,16 +230,16 @@ class AmqpQueueService
         }
 
         //初始化交换器
-        $this->channel->exchange_declare(
-            $this->queueJob->getExchangeName(),
+        $channel->exchange_declare(
+            $queueJob->getExchangeName(),
             $exchangeType,
-            $this->queueJob->isExchangePassive(),
-            $this->queueJob->isExchangeDurable(),
-            $this->queueJob->isExchangeAutoDelete(),
-            $this->queueJob->isExchangeInternal(),
-            $this->queueJob->isExchangeNowait(),
+            $queueJob->isExchangePassive(),
+            $queueJob->isExchangeDurable(),
+            $queueJob->isExchangeAutoDelete(),
+            $queueJob->isExchangeInternal(),
+            $queueJob->isExchangeNowait(),
             new AMQPTable($exchangeArgument),
-            ($this->queueJob->getExchangeTicket() > 0) ? $this->queueJob->getExchangeTicket() : null
+            ($queueJob->getExchangeTicket() > 0) ? $queueJob->getExchangeTicket() : null
         );
     }
 
@@ -278,30 +247,30 @@ class AmqpQueueService
      * 处理声明队列
      * @return string 队列名称
      */
-    private function handlerQueueDeclare(): string
+    private function handlerQueueDeclare(AMQPChannel &$channel, QueueInterface &$queueJob): string
     {
         //queue附加参数
-        $argument = $this->queueJob->getQueueArgs();
+        $argument = $queueJob->getQueueArgs();
 
         //开启死信队列模式
-        if ($this->queueJob->isDeadLetter() && $this->queueJob->getDeadLetterExchangeName() && $this->queueJob->getDeadLetterRoutingKey()) {
+        if ($queueJob->isDeadLetter() && $queueJob->getDeadLetterExchangeName() && $queueJob->getDeadLetterRoutingKey()) {
             //声明业务队列的死信交换器
             $argument = array_merge($argument, [
-                "x-dead-letter-exchange" => $this->queueJob->getDeadLetterExchangeName(), //配置死信交换器
-                "x-dead-letter-routing-key" => $this->queueJob->getDeadLetterRoutingKey(), //配置RoutingKey
+                "x-dead-letter-exchange" => $queueJob->getDeadLetterExchangeName(), //配置死信交换器
+                "x-dead-letter-routing-key" => $queueJob->getDeadLetterRoutingKey(), //配置RoutingKey
             ]);
         }
 
         //声明队列
-        list($queueName) = $this->channel->queue_declare(
-            $this->queueJob->getQueueName(),
-            $this->queueJob->isQueuePassive(),
-            $this->queueJob->isQueueDurable(),
-            $this->queueJob->isQueueExclusive(),
-            $this->queueJob->isQueueAutoDelete(),
-            $this->queueJob->isQueueNowait(),
+        list($queueName) = $channel->queue_declare(
+            $queueJob->getQueueName(),
+            $queueJob->isQueuePassive(),
+            $queueJob->isQueueDurable(),
+            $queueJob->isQueueExclusive(),
+            $queueJob->isQueueAutoDelete(),
+            $queueJob->isQueueNowait(),
             new AMQPTable($argument),
-            ($this->queueJob->getQueueTicket() > 0) ? $this->queueJob->getQueueTicket() : null
+            ($queueJob->getQueueTicket() > 0) ? $queueJob->getQueueTicket() : null
         );
 
         return $queueName;

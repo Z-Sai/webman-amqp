@@ -16,11 +16,13 @@ class Heartbeat implements Bootstrap
     public static function start(?Worker $worker)
     {
         try {
+            //过滤非worker进程
             if ($worker->name != "webman") return;
 
             //读取amqp配置文件
             $configs = config("plugin.sai97.webman-amqp.app");
             if (!isset($configs["enable"]) || $configs["enable"] !== true) return;
+
             //获取所有的连接配置
             if (!isset($configs["connections"]) || empty($connections = $configs["connections"])) return;
 
@@ -31,17 +33,17 @@ class Heartbeat implements Bootstrap
             foreach ($connections as $connection) {
                 $service->register(new $connection["instance"]);
             }
-            $managers = $service->getManagers();
+
             //定时检查并发送心跳数据
-            Timer::add(10, function () use ($managers) {
+            $managers = $service->getManagers();
+            Timer::add(55, function () use ($managers) {
                 foreach ($managers as $name => $manager) {
                     $manager["connection"]->checkHeartBeat();
-                    echo "[{$name} " . Carbon::now()->format("Y-m-d H:i:s") . "] RabbitMQ检测心跳状态机制执行完毕..." . PHP_EOL;
+                    echo "[connectionName:{$name} " . Carbon::now()->format("Y-m-d H:i:s") . "] RabbitMQ检测心跳状态机制执行完毕..." . PHP_EOL;
                 }
             });
         } catch (\Throwable $throwable) {
             echo "AMQP心跳进程发生错误: class->" . __CLASS__ . ", error->{$throwable->getMessage()}, file->{$throwable->getFile()}, line->{$throwable->getLine()}" . PHP_EOL;
-            return;
         }
     }
 }
