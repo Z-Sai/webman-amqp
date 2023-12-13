@@ -140,6 +140,11 @@ class AmqpQueueService
             $this->queueJob->getExchangeName(),
             $this->queueJob->getRoutingKey() ? $this->queueJob->getRoutingKey() : $this->queueJob->getQueueName()
         );
+
+        if ($this->queueJob->isPublisherConfirm()) {
+            //等待接收服务器的ack和nack
+            $this->channel->wait_for_pending_acks($this->queueJob->getPublisherConfirmWaitTime());
+        }
     }
 
     /**
@@ -195,9 +200,6 @@ class AmqpQueueService
                 if (!is_null($publisherConfirmsNackHandler = $this->queueJob->getPublisherConfirmsNackHandler())) {
                     $this->channel->set_nack_handler($publisherConfirmsNackHandler);
                 }
-
-                //等待接收服务器的ack和nack
-                $this->channel->wait_for_pending_acks($this->queueJob->getPublisherConfirmWaitTime());
             }
         } else {
             //当前消费者QOS相关配置
