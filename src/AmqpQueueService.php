@@ -63,7 +63,7 @@ class AmqpQueueService
             throw new AmqpQueueException("No connection configuration named {$connectName} was found.");
         }
 
-        $manager["connection"] = new AMQPStreamConnection(
+        $connection = new AMQPStreamConnection(
             $config["host"],
             $config["port"],
             $config["user"],
@@ -82,8 +82,21 @@ class AmqpQueueService
             $config["ssl_protocol"] ?? null,
             $config["config"] ?? null
         );
-        $manager["channel"] = $manager["connection"]->channel();
-        $manager["queueJob"] = new $config["instance"];
+        $manager["connection"] = $connection;
+
+        /**
+         * @var $instance QueueInterface
+         */
+        $instance = new $config["instance"];
+        $manager["queueJob"] = $instance;
+
+        $channel = $connection->channel();
+        if ($instance->isPublisherConfirm()) {
+            //设置通道为确认模式
+            $channel->confirm_select($instance->getConfirmSelectNowait());
+        }
+        $manager["channel"] = $channel;
+
         $this->managers[$connectName] = $manager;
     }
 
@@ -96,7 +109,6 @@ class AmqpQueueService
         $this->connection = $manager["connection"];
         $this->channel = $manager["channel"];
         $this->queueJob = $manager["queueJob"];
-        $this->initStrategy("producer");
     }
 
     public function getManagers(): array
@@ -132,6 +144,8 @@ class AmqpQueueService
                 $this->channel->set_nack_handler($publisherConfirmsNackHandler);
             }
         }
+
+        $this->initStrategy("producer");
 
         $properties = [
             "content_type" => $this->queueJob->getContentType(),
@@ -198,10 +212,10 @@ class AmqpQueueService
         }
 
         if ($caller == "producer") {
-            if ($this->queueJob->isPublisherConfirm()) {
-                //设置通道为确认模式
-                $this->channel->confirm_select($this->queueJob->getConfirmSelectNowait());
-            }
+//            if ($this->queueJob->isPublisherConfirm()) {
+//                //设置通道为确认模式
+//                $this->channel->confirm_select($this->queueJob->getConfirmSelectNowait());
+//            }
         } else {
             //当前消费者QOS相关配置
             $this->channel->basic_qos($this->queueJob->getQosPrefetchSize(), $this->queueJob->getQosPrefetchCount(), $this->queueJob->isQosGlobal());
